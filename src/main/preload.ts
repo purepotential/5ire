@@ -27,16 +27,60 @@ export type Channels =
   | 'save-embedding-model-file'
   | 'remove-embedding-model'
   | 'close-app'
-  | 'mcp-server-loaded';
+  | 'mcp-server-loaded'
+  | 'ipc-example'
+  | 'store:toolCallAppended'
+  | 'store:appendToolCall';
 
 const electronHandler = {
   store: {
     get(key: string, defaultValue?: any | undefined): any {
-      return ipcRenderer.sendSync('get-store', key, defaultValue);
+      try {
+        if (!ipcRenderer) {
+          throw new Error('IPC Renderer not initialized');
+        }
+        return ipcRenderer.sendSync('get-store', key, defaultValue);
+      } catch (error) {
+        console.error('Error in store.get:', error);
+        return defaultValue;
+      }
     },
     set(key: string, val: any) {
-      ipcRenderer.sendSync('set-store', key, val);
+      try {
+        if (!ipcRenderer) {
+          throw new Error('IPC Renderer not initialized');
+        }
+        return ipcRenderer.sendSync('set-store', key, val);
+      } catch (error) {
+        console.error('Error in store.set:', error);
+        return false;
+      }
     },
+    appendToolCall: (messageId: string, toolCall: any) => {
+      try {
+        if (!ipcRenderer) {
+          throw new Error('IPC Renderer not initialized');
+        }
+        
+        if (!messageId || !toolCall) {
+          throw new Error('Invalid parameters for appendToolCall');
+        }
+
+        console.log('Sending appendToolCall:', { messageId, toolCall });
+        ipcRenderer.send('store:appendToolCall', { 
+          data: { 
+            messageId, 
+            toolCall,
+            timestamp: Date.now() // Add timestamp for tracking
+          } 
+        });
+        
+        return true;
+      } catch (error) {
+        console.error('Error in store.appendToolCall:', error);
+        return false;
+      }
+    }
   },
   mcp: {
     init() {
@@ -164,8 +208,27 @@ const electronHandler = {
       ipcRenderer.send(channel, ...args);
     },
     on(channel: Channels, func: (...args: unknown[]) => void) {
-      const subscription = (_event: IpcRendererEvent, ...args: unknown[]) =>
+      const subscription = (_event: IpcRendererEvent, ...args: unknown[]) => {
+        console.log('IPC Event received:', { channel, args });
+        
+        if (channel === 'store:toolCallAppended') {
+          console.log('Raw tool call event data:', args);
+          
+          // Safely handle the first argument
+          const firstArg = args[0];
+          if (!firstArg || typeof firstArg !== 'object') {
+            console.error('Invalid event data format:', firstArg);
+            return;
+          }
+          
+          // Call the callback with the event data
+          func(firstArg);
+          return;
+        }
+        
+        // For other channels, pass through all args
         func(...args);
+      };
       ipcRenderer.on(channel, subscription);
 
       return () => {

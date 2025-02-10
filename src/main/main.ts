@@ -442,6 +442,37 @@ ipcMain.handle('mcp-get-active-servers', () => {
   return mcp.getClientNames();
 });
 
+ipcMain.on('store:appendToolCall', (event, { data }) => {
+  logging.debug('Received appendToolCall event:', { data });
+
+  // Validate data structure
+  if (!data || typeof data !== 'object') {
+    logging.error('Invalid data received in appendToolCall - not an object:', data);
+    return;
+  }
+
+  const { messageId, toolCall } = data;
+  if (!messageId || !toolCall) {
+    logging.error('Invalid data received in appendToolCall - missing required fields:', data);
+    return;
+  }
+
+  logging.debug('Broadcasting toolCallAppended event with payload:', {
+    data: { messageId, toolCall }
+  });
+
+  // Forward the event to all renderer windows
+  BrowserWindow.getAllWindows().forEach((window) => {
+    try {
+      window.webContents.send('store:toolCallAppended', {
+        data: { messageId, toolCall }
+      });
+    } catch (error) {
+      logging.error('Error sending toolCallAppended event:', error);
+    }
+  });
+});
+
 if (process.env.NODE_ENV === 'production') {
   const sourceMapSupport = require('source-map-support');
   sourceMapSupport.install();

@@ -44,6 +44,7 @@ export default abstract class NextCharService {
   protected toolCallsWithResponses: IToolCall[] = [];
   protected currentRecursionDepth: number = 0;
   protected readonly MAX_RECURSION_DEPTH = 10;
+  protected currentPosition: number = 0;
 
   constructor({
     context,
@@ -201,9 +202,10 @@ export default abstract class NextCharService {
   }
 
   public async chat(messages: IChatRequestMessage[]) {
-    // Reset tool calls array and recursion depth if this is the top-level call
+    // Reset tool calls array and position if this is the top-level call
     if (this.currentRecursionDepth === 0) {
       this.toolCallsWithResponses = [];
+      this.currentPosition = 0;
     }
     
     // Check recursion depth
@@ -254,6 +256,8 @@ export default abstract class NextCharService {
         onError: (err: any) => this.onErrorCallback(err, false),
         onProgress: (chunk: string) => {
           reply += chunk;
+          const renderedLength = this.calculateRenderedLength(chunk);
+          this.currentPosition += renderedLength;
           this.onReadingCallback(chunk);
         },
         onToolCalls: this.onToolCallsCallback,
@@ -296,13 +300,20 @@ export default abstract class NextCharService {
         const newToolCall = {
           name: readResult.tool.name,
           args: readResult.tool.args,
-          response: toolCallsResult
+          response: toolCallsResult,
+          position: this.currentPosition
         };
 
         debug('Created new tool call object:', {
           toolCall: newToolCall,
           toolCallJson: JSON.stringify(newToolCall, null, 2)
         });
+
+        // Update tool calls in real-time
+        const messageId = this.context.getMessageId();
+        if (messageId) {
+          await window.electron.store.appendToolCall(messageId, newToolCall);
+        }
 
         this.toolCallsWithResponses.push(newToolCall);
 
@@ -400,5 +411,12 @@ export default abstract class NextCharService {
     } finally {
       this.currentRecursionDepth--;
     }
+  }
+
+  protected calculateRenderedLength(html: string): number {
+    // Create a temporary div to calculate rendered length
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    return tempDiv.textContent?.length || 0;
   }
 }

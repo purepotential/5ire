@@ -21,8 +21,9 @@ export interface IChatResponseMessage {
 
 export interface IToolCall {
   name: string;
-  args: any;
+  args?: any;
   response?: any;
+  position?: number;
 }
 
 export interface IMCPTool {

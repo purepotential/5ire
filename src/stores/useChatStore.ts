@@ -65,6 +65,7 @@ export interface IChatStore {
     offset?: number;
     keyword?: string;
   }) => Promise<IChatMessageInternal[]>;
+  appendToolCall: (messageId: string, toolCall: IToolCall) => void;
 }
 
 const processMessage = (message: IChatMessage): IChatMessageInternal => {
@@ -665,6 +666,56 @@ const useChatStore = create<IChatStore>((set, get) => ({
       return [];
     }
   },
+  appendToolCall: (messageId: string, toolCall: IToolCall) => {
+    debug('Appending tool call:', {
+      messageId,
+      toolCall: JSON.stringify(toolCall, null, 2)
+    });
+    
+    set((state) => {
+      const messages = [...state.messages];
+      const messageIndex = messages.findIndex((m) => m.id === messageId);
+      if (messageIndex === -1) {
+        debug('Message not found:', messageId);
+        return state;
+      }
+
+      const message = messages[messageIndex];
+      const existingToolCalls = message.toolCalls || [];
+      
+      messages[messageIndex] = {
+        ...message,
+        toolCalls: [...existingToolCalls, toolCall]
+      };
+
+      debug('Updated message with new tool call:', {
+        messageId,
+        toolCallsCount: messages[messageIndex].toolCalls?.length
+      });
+
+      return { messages };
+    });
+  },
 }));
+
+// Listen for tool call updates from the main process
+if (typeof window !== 'undefined') {
+  window.electron.ipcRenderer.on(
+    'store:toolCallAppended',
+    (eventData: any) => {
+      debug('Received tool call update:', {
+        eventData: JSON.stringify(eventData, null, 2)
+      });
+      
+      if (!eventData?.data?.messageId || !eventData?.data?.toolCall) {
+        debug('Invalid event data structure:', eventData);
+        return;
+      }
+      
+      const { messageId, toolCall } = eventData.data;
+      useChatStore.getState().appendToolCall(messageId, toolCall);
+    }
+  );
+}
 
 export default useChatStore;
