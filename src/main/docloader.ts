@@ -1,6 +1,5 @@
 import fs from 'fs';
 import * as logging from './logging';
-import pdf from 'pdf-parse';
 import officeParser from 'officeparser';
 
 abstract class BaseLoader {
@@ -37,9 +36,45 @@ class OfficeLoader extends BaseLoader {
 
 class PdfLoader extends BaseLoader {
   async read(filePath: fs.PathLike): Promise<string> {
-    const dataBuffer = fs.readFileSync(filePath);
-    const data = await pdf(dataBuffer);
-    return data.text;
+    return new Promise(async (resolve, reject) => {
+      try {
+        const PDFParser = (await import('pdf2json')).default;
+        const pdfParser = new PDFParser();
+
+        pdfParser.on('pdfParser_dataError', (errData: any) => {
+          logging.error('Error reading PDF:', errData.parserError);
+          reject(errData.parserError);
+        });
+
+        pdfParser.on('pdfParser_dataReady', (pdfData: any) => {
+          try {
+            const pages = pdfData.Pages || [];
+            const text = pages
+              .map((page: any) => {
+                const texts = page.Texts || [];
+                return texts
+                  .map((text: any) => 
+                    text.R
+                      .map((r: any) => decodeURIComponent(r.T))
+                      .join(' ')
+                  )
+                  .join(' ');
+              })
+              .join('\n\n');
+
+            resolve(text || 'No text content found in PDF');
+          } catch (error) {
+            logging.error('Error processing PDF data:', error);
+            reject(error);
+          }
+        });
+
+        pdfParser.loadPDF(filePath.toString());
+      } catch (error) {
+        logging.error('Error initializing PDF parser:', error);
+        reject(error);
+      }
+    });
   }
 }
 

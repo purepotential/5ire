@@ -643,6 +643,13 @@ deeplink.on('received', (link: string) => {
 });
 
 process.on('uncaughtException', (error) => {
+  // Dodaj szczegółowe logowanie
+  logging.info('Uncaught Exception Details:');
+  logging.info('Message:', error.message);
+  logging.info('Stack:', error.stack);
+  logging.info('File path:', error.path); // jeśli dostępne
+  
+  // Wyślij informacje do systemu logowania
   logging.captureException(error);
 });
 

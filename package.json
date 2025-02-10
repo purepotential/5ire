@@ -79,7 +79,8 @@
     }
   },
   "dependencies": {
-    "@lancedb/lancedb": "^0.14.1"
+    "@lancedb/lancedb": "^0.14.1",
+    "pdf2json": "^3.1.5"
   },
   "devDependencies": {
     "@axiomhq/js": "^1.0.0-rc.1",
@@ -170,7 +171,6 @@
     "mousetrap": "^1.6.5",
     "node-abi": "^3.65.0",
     "officeparser": "^5.1.1",
-    "pdf-parse": "^1.1.1",
     "postcss": "^8.4.24",
     "postcss-loader": "^7.3.3",
     "prettier": "^2.8.8",
@@ -228,7 +228,13 @@
       "en"
     ],
     "files": [
-      "dist",
+      "dist/**/*",
+      "!**/*.spec.*",
+      "!**/*.test.*",
+      "!**/test/**",
+      "!**/tests/**",
+      "!**/__tests__/**",
+      "!**/__mocks__/**",
       "package.json",
       "!**/node_modules/**/*.map",
       "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme,LICENSE,test.js}",
@@ -246,7 +252,8 @@
       "!**/source/**",
       "!**/node_modules/@xenova/transformers/dist/**",
       "**/node_modules/@xenova/transformers/src/**",
-      "**/node_modules/textract/lib/extractors/**"
+      "**/node_modules/textract/lib/extractors/**",
+      "**/node_modules/pdf-parse/test/**"
     ],
     "afterPack": ".erb/scripts/remove-useless.js",
     "afterSign": ".erb/scripts/notarize.js",
