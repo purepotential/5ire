@@ -47,6 +47,7 @@ function createTableMessages() {
       "citedFiles"	TEXT,
       "citedChunks"	TEXT,
       "maxTokens" INTEGER,
+      "toolCalls" TEXT,
       PRIMARY KEY ("id"),
       CONSTRAINT "fk_messages_chats" FOREIGN KEY ("chatId") REFERENCES "chats" ("id") ON DELETE CASCADE ON UPDATE CASCADE
     )`
@@ -167,6 +168,18 @@ function createTableChatKnowledgeRels() {
     .run();
 }
 
+function migrateMessagesTable() {
+  // Check if toolCalls column exists
+  const tableInfo = database.prepare("PRAGMA table_info(messages)").all();
+  const hasToolCalls = tableInfo.some((column: any) => column.name === 'toolCalls');
+  
+  if (!hasToolCalls) {
+    logging.info('Adding toolCalls column to messages table...');
+    database.prepare('ALTER TABLE messages ADD COLUMN "toolCalls" TEXT').run();
+    logging.info('Successfully added toolCalls column');
+  }
+}
+
 const initDatabase = database.transaction(() => {
   logging.debug('Init database...');
 
@@ -179,6 +192,7 @@ const initDatabase = database.transaction(() => {
   createTableKnowledgeCollections();
   createTableKnowledgeFiles();
   createTableChatKnowledgeRels();
+  migrateMessagesTable();
   logging.info('Database initialized.');
 });
 

@@ -9,7 +9,7 @@ import { isNil, isNumber } from 'lodash';
 import { isValidMaxTokens, isValidTemperature } from 'intellichat/validators';
 
 import useProvider from './useProvider';
-import { IChat, IChatContext, IChatMessage } from 'intellichat/types';
+import { IChat, IChatContext, IChatMessage, IChatMessageInternal } from 'intellichat/types';
 import { IChatModel } from 'providers/types';
 
 const debug = Debug('5ire:hooks:useChatContext');
@@ -116,7 +116,7 @@ export default function useChatContext(): IChatContext{
 
     const getCtxMessages = () => {
       const { chat } = useChatStore.getState();
-      let ctxMessages: IChatMessage[] = [];
+      let ctxMessages: IChatMessageInternal[] = [];
       const maxCtxMessages = isNumber(chat?.maxCtxMessages)
         ? chat?.maxCtxMessages
         : NUM_CTX_MESSAGES;
@@ -136,6 +136,15 @@ export default function useChatContext(): IChatContext{
       return ctxMessages;
     };
 
+    const getMessageId = () => {
+      const { messages } = useChatStore.getState();
+      return messages[messages.length - 1]?.id;
+    };
+
+    const updateMessage = async (message: { id: string } & Partial<IChatMessage>) => {
+      await useChatStore.getState().updateMessage(message);
+    };
+
     const ctx = {
       getActiveChat,
       getProvider,
@@ -146,6 +155,8 @@ export default function useChatContext(): IChatContext{
       getMaxTokens,
       getChatContext,
       isStream,
+      getMessageId,
+      updateMessage,
     };
     return ctx;
   }, []);

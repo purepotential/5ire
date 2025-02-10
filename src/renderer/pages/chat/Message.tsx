@@ -5,8 +5,9 @@ import useChatStore from 'stores/useChatStore';
 import { useCallback, useEffect, useMemo } from 'react';
 import useMarkdown from 'hooks/useMarkdown';
 import MessageToolbar from './MessageToolbar';
+import ToolCallDisplay from './ToolCallDisplay';
 import {highlight } from '../../../utils/util';
-import { IChatMessage } from 'intellichat/types';
+import { IChatMessageInternal } from 'intellichat/types';
 import { useTranslation } from 'react-i18next';
 import { Divider } from '@fluentui/react-components';
 import useKnowledgeStore from 'stores/useKnowledgeStore';
@@ -16,13 +17,22 @@ import useSettingsStore from 'stores/useSettingsStore';
 
 const debug = Debug('5ire:pages:chat:Message');
 
-export default function Message({ message }: { message: IChatMessage }) {
+export default function Message({ message }: { message: IChatMessageInternal }) {
   const { t } = useTranslation();
   const { notifyInfo } = useToast();
   const fontSize = useSettingsStore((state) => state.fontSize);
   const keywords = useChatStore((state: any) => state.keywords);
   const states = useChatStore().getCurState();
   const { showCitation } = useKnowledgeStore();
+  
+  debug('Message component received props:', {
+    messageId: message.id,
+    hasToolCalls: !!message.toolCalls,
+    toolCallsCount: message.toolCalls?.length || 0,
+    isActive: message.isActive,
+    reply: message.reply?.substring(0, 100)
+  });
+
   const keyword = useMemo(
     () => keywords[message.chatId],
     [keywords, message.chatId]
@@ -37,6 +47,52 @@ export default function Message({ message }: { message: IChatMessage }) {
   }, [message.citedChunks]);
 
   const { render } = useMarkdown();
+
+  const toolCalls = useMemo(() => {
+    debug('Processing toolCalls:', {
+      messageId: message.id,
+      toolCallsType: typeof message.toolCalls,
+      rawValue: message.toolCalls
+    });
+
+    if (!message.toolCalls) return [];
+    
+    // Handle string format (from database)
+    if (typeof message.toolCalls === 'string') {
+      try {
+        const parsed = JSON.parse(message.toolCalls);
+        debug('Parsed toolCalls from string:', {
+          messageId: message.id,
+          parsedType: typeof parsed,
+          parsedLength: Array.isArray(parsed) ? parsed.length : 0
+        });
+        return parsed;
+      } catch (e) {
+        debug('Failed to parse toolCalls:', e);
+        return [];
+      }
+    }
+    
+    // Handle array format (from live updates)
+    if (Array.isArray(message.toolCalls)) {
+      debug('Processing array toolCalls:', {
+        messageId: message.id,
+        arrayLength: message.toolCalls.length
+      });
+      return message.toolCalls;
+    }
+    
+    return [];
+  }, [message.toolCalls, message.id]);
+
+  useEffect(() => {
+    debug('Tool calls render check:', {
+      messageId: message.id,
+      hasToolCalls: toolCalls.length > 0,
+      toolCallsCount: toolCalls.length,
+      isActive: message.isActive
+    });
+  }, [message.id, toolCalls, message.isActive]);
 
   const onCitationClick = useCallback(
     (event: any) => {
@@ -73,6 +129,17 @@ export default function Message({ message }: { message: IChatMessage }) {
   }, [message.isActive, registerCitationClick]);
 
   const replyNode = useCallback(() => {
+    debug('Rendering reply node:', {
+      messageId: message.id,
+      isActive: message.isActive,
+      loading: states.loading,
+      reply: message.reply?.substring(0, 100),
+      runningTool: states.runningTool,
+      hasToolCalls: toolCalls.length > 0,
+      toolCallsCount: toolCalls.length,
+      toolCalls: message.toolCalls
+    });
+    
     if (message.isActive && states.loading) {
       if (!message.reply || message.reply === '') {
         return (
@@ -96,7 +163,7 @@ export default function Message({ message }: { message: IChatMessage }) {
           dangerouslySetInnerHTML={{
             __html: render(
               `${
-                highlight(message.reply, keyword) || ''
+                highlight(message.reply || '', keyword || '') || ''
               }<span class="blinking-cursor" /></span>`
             ),
           }}
@@ -107,11 +174,12 @@ export default function Message({ message }: { message: IChatMessage }) {
       <div
         className={`mt-1 break-all ${fontSize === 'large' ? 'font-lg' : ''}`}
         dangerouslySetInnerHTML={{
-          __html: render(`${highlight(message.reply, keyword)}` || ''),
+          __html: render(highlight(message.reply || '', keyword || '') || ''),
         }}
       />
     );
   }, [message, keyword, states, fontSize]);
+
   return (
     <div className="leading-6 message" id={message.id}>
       <div>
@@ -142,7 +210,18 @@ export default function Message({ message }: { message: IChatMessage }) {
           style={{ minHeight: '40px' }}
         >
           <div className="avatar flex-shrink-0 mr-2" />
-          {replyNode()}
+          <div className="flex-grow">
+            {replyNode()}
+            {toolCalls.length > 0 && (
+              (() => {
+                debug('Rendering ToolCallDisplay:', {
+                  messageId: message.id,
+                  toolCallsCount: toolCalls.length
+                });
+                return <ToolCallDisplay toolCalls={toolCalls} />;
+              })()
+            )}
+          </div>
         </div>
         {citedFiles.length > 0 && (
           <div className="message-cited-files mt-2">

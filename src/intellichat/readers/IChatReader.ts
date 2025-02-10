@@ -7,9 +7,12 @@ export interface ITool {
 export interface IReadResult {
   content: string;
   tool?: ITool | null;
+  toolCalls?: any[];
+  error?: any;
   inputTokens?: number;
   outputTokens?: number;
 }
+
 export default interface IChatReader {
   read({
     onError,

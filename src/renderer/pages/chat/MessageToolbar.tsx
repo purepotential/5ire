@@ -22,14 +22,18 @@ import useChatStore from 'stores/useChatStore';
 import { IBookmark } from 'types/bookmark';
 import { fmtDateTime, unix2date } from 'utils/util';
 import useToast from 'hooks/useToast';
-import { IChatMessage } from 'intellichat/types';
+import { IChatMessageInternal } from 'intellichat/types';
 
 const DeleteIcon = bundleIcon(Delete16Filled, Delete16Regular);
 const CopyIcon = bundleIcon(Copy16Filled, Copy16Regular);
 const BookmarkAddIcon = bundleIcon(Bookmark16Filled, Bookmark16Regular);
 const BookmarkOffIcon = bundleIcon(Bookmark16Regular, Bookmark16Filled);
 
-export default function MessageToolbar({ message }: { message: IChatMessage }) {
+interface MessageToolbarProps {
+  message: IChatMessageInternal;
+}
+
+export default function MessageToolbar({ message }: MessageToolbarProps) {
   const { t } = useTranslation();
   const [delPopoverOpen, setDelPopoverOpen] = useState<boolean>(false);
   const deleteMessage = useChatStore((state) => state.deleteMessage);

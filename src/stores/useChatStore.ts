@@ -9,7 +9,7 @@ import { date2unix } from 'utils/util';
 import { isBlank, isNotBlank } from 'utils/validators';
 import useSettingsStore from './useSettingsStore';
 import useStageStore from './useStageStore';
-import { IChat, IChatMessage } from 'intellichat/types';
+import { IChat, IChatMessage, IChatMessageInternal, IToolCall } from 'intellichat/types';
 import { isValidTemperature } from 'intellichat/validators';
 import { getProvider, getChatModel } from 'providers';
 
@@ -20,7 +20,7 @@ export interface IChatStore {
   chat: {
     id: string;
   } & Partial<IChat>;
-  messages: IChatMessage[];
+  messages: IChatMessageInternal[];
   keywords: { [key: string]: string };
   states: {
     [key: string]: {
@@ -46,10 +46,10 @@ export interface IChatStore {
   fetchChat: (limit?: number) => Promise<IChat[]>;
   getChat: (id: string) => Promise<IChat>;
   // message
-  createMessage: (message: Partial<IChatMessage>) => Promise<IChatMessage>;
-  appendReply: (chatId: string, reply: string) => string;
+  createMessage: (message: Partial<IChatMessageInternal>) => Promise<IChatMessageInternal>;
+  appendReply: (msgId: string, reply: string) => string;
   updateMessage: (
-    message: { id: string } & Partial<IChatMessage>
+    message: { id: string } & Partial<IChatMessageInternal>
   ) => Promise<boolean>;
   bookmarkMessage: (id: string, bookmarkId: string | null) => void;
   deleteMessage: (id: string) => Promise<boolean>;
@@ -64,8 +64,83 @@ export interface IChatStore {
     limit?: number;
     offset?: number;
     keyword?: string;
-  }) => Promise<IChatMessage[]>;
+  }) => Promise<IChatMessageInternal[]>;
 }
+
+const processMessage = (message: IChatMessage): IChatMessageInternal => {
+  let toolCalls: IToolCall[] = [];
+  
+  // Early return if message is null/undefined
+  if (!message) {
+    debug('Received null/undefined message in processMessage');
+    return {
+      id: '',
+      chatId: '',
+      toolCalls: [],
+      severity: 'info'
+    } as IChatMessageInternal;
+  }
+
+  // Only process toolCalls if the field exists
+  if (message.toolCalls !== undefined && message.toolCalls !== null) {
+    try {
+      debug('Processing message toolCalls:', {
+        messageId: message.id,
+        toolCallsType: typeof message.toolCalls
+      });
+      
+      if (typeof message.toolCalls === 'string') {
+        try {
+          const parsed = JSON.parse(message.toolCalls);
+          if (Array.isArray(parsed)) {
+            toolCalls = parsed;
+            debug('Successfully parsed toolCalls into array:', {
+              messageId: message.id,
+              toolCallsCount: toolCalls.length
+            });
+          } else {
+            debug('Parsed toolCalls is not an array:', {
+              messageId: message.id,
+              parsed
+            });
+          }
+        } catch (parseError) {
+          debug('Failed to parse toolCalls string:', {
+            messageId: message.id,
+            error: parseError,
+            toolCalls: message.toolCalls
+          });
+        }
+      } else if (Array.isArray(message.toolCalls)) {
+        toolCalls = message.toolCalls;
+        debug('ToolCalls is already an array:', {
+          messageId: message.id,
+          toolCallsCount: toolCalls.length
+        });
+      } else {
+        debug('ToolCalls is neither string nor array:', {
+          messageId: message.id,
+          toolCallsType: typeof message.toolCalls
+        });
+      }
+    } catch (e) {
+      debug('Error processing toolCalls:', {
+        messageId: message.id,
+        error: e,
+        toolCalls: message.toolCalls
+      });
+    }
+  } else {
+    debug('No toolCalls field in message:', {
+      messageId: message.id
+    });
+  }
+  
+  return {
+    ...message,
+    toolCalls  // Always an array (empty if parsing failed or field not present)
+  };
+};
 
 const useChatStore = create<IChatStore>((set, get) => ({
   keywords: {},
@@ -297,110 +372,206 @@ const useChatStore = create<IChatStore>((set, get) => ({
       return false;
     }
   },
-  createMessage: async (message: Partial<IChatMessage>) => {
-    const msg = {
-      id: typeid('msg').toString(),
+  createMessage: async (message: Partial<IChatMessageInternal>) => {
+    debug('Creating message with toolCalls:', {
+      messageId: message.id,
+      hasToolCalls: !!message.toolCalls,
+      toolCallsCount: message.toolCalls?.length || 0
+    });
+
+    const msgId = typeid('msg').toString();
+
+    // Convert toolCalls to string for database storage
+    const dbMessage = {
       ...message,
-      createdAt: date2unix(new Date()),
+      id: msgId,
+      toolCalls: message.toolCalls ? JSON.stringify(message.toolCalls) : '[]',
+      createdAt: date2unix(new Date())
     } as IChatMessage;
-    const columns = Object.keys(msg);
+
+    debug('Created message object for database:', {
+      messageId: msgId,
+      toolCalls: dbMessage.toolCalls,
+      toolCallsType: typeof dbMessage.toolCalls
+    });
+
+    const columns = Object.keys(dbMessage);
     await window.electron.db.run(
       `INSERT INTO messages (${columns.join(',')})
       VALUES(${'?'.repeat(columns.length).split('').join(',')})`,
-      Object.values(msg)
+      Object.values(dbMessage)
     );
-    set((state) => ({
-      messages: [...state.messages, msg],
-    }));
-    // 每次提交消息后，清空输入框
+    
+    const processedMsg = processMessage(dbMessage);
+    debug('Processed message for state:', {
+      messageId: processedMsg.id,
+      toolCallsCount: processedMsg.toolCalls?.length || 0
+    });
+
+    const currentMessages = get().messages || [];
+    set({ messages: [...currentMessages, processedMsg] });
+    
     useStageStore
       .getState()
-      .editStage(msg.chatId, { chatId: msg.chatId, input: '' });
-    return msg;
+      .editStage(dbMessage.chatId, { chatId: dbMessage.chatId, input: '' });
+    return processedMsg;
   },
   appendReply: (msgId: string, reply: string) => {
     let $reply = '';
+    debug('Appending reply:', {
+      messageId: msgId,
+      replyLength: reply.length,
+      replyPreview: reply.substring(0, 100)
+    });
     set(
       produce((state: IChatStore) => {
         const message = state.messages.find((msg) => msg.id === msgId);
         if (message) {
           $reply = message.reply ? `${message.reply}${reply}` : reply;
           message.reply = $reply;
+          debug('Updated message reply:', {
+            messageId: msgId,
+            totalLength: $reply.length,
+            preview: $reply.substring(0, 100),
+            toolCalls: message.toolCalls
+          });
+        } else {
+          debug('Message not found for appending reply:', msgId);
         }
       })
     );
     return $reply;
   },
-  updateMessage: async (message: { id: string } & Partial<IChatMessage>) => {
+  updateMessage: async (message: { id: string } & Partial<IChatMessageInternal>) => {
+    debug('Updating message:', {
+      messageId: message.id,
+      hasToolCalls: !!message.toolCalls,
+      toolCallsCount: message.toolCalls?.length || 0
+    });
+    
     const msg = { id: message.id } as IChatMessage;
     const stats: string[] = [];
-    const params: (string | number)[] = [];
-    if (isNotBlank(message.prompt)) {
-      stats.push('prompt = ?');
-      msg.prompt = message.prompt as string;
-      params.push(msg.prompt);
-    }
-    if (isNotBlank(message.reply)) {
+    const params: any[] = [];
+    
+    // Get current message from state
+    const currentMessage = get().messages.find(m => m.id === message.id);
+    
+    if (!isNil(message.reply)) {
       stats.push('reply = ?');
-      msg.reply = message.reply as string;
+      msg.reply = currentMessage?.reply || message.reply;
       params.push(msg.reply);
     }
+    
+    if (isNotBlank(message.prompt)) {
+      stats.push('prompt = ?');
+      msg.prompt = message.prompt;
+      params.push(msg.prompt);
+    }
+    
     if (isNotBlank(message.model)) {
       stats.push('model = ?');
-      msg.model = message.model as string;
+      msg.model = message.model;
       params.push(msg.model);
     }
+    
     if (isNumber(message.temperature)) {
       stats.push('temperature = ?');
-      msg.temperature = message.temperature as number;
+      msg.temperature = message.temperature;
       params.push(msg.temperature);
     }
+    
     if (isNumber(message.inputTokens)) {
       stats.push('inputTokens = ?');
-      msg.inputTokens = message.inputTokens as number;
+      msg.inputTokens = message.inputTokens;
       params.push(msg.inputTokens);
     }
+    
     if (isNumber(message.outputTokens)) {
       stats.push('outputTokens = ?');
-      msg.outputTokens = message.outputTokens as number;
+      msg.outputTokens = message.outputTokens;
       params.push(msg.outputTokens);
     }
+    
     if (!isNil(message.memo)) {
       stats.push('memo = ?');
-      msg.memo = message.memo as string;
+      msg.memo = message.memo;
       params.push(msg.memo);
     }
-    if (!isNil(message.isActive)) {
-      stats.push('isActive = ?');
-      msg.isActive = message.isActive as boolean;
-      params.push(msg.isActive ? 1 : 0);
+
+    // Handle tool calls - avoid double encoding
+    if (!isNil(message.toolCalls)) {
+      stats.push('toolCalls = ?');
+      // Ensure we're storing a string in the database
+      msg.toolCalls = Array.isArray(message.toolCalls) 
+        ? JSON.stringify(message.toolCalls)
+        : message.toolCalls;
+      params.push(msg.toolCalls);
+      debug('Updating toolCalls:', {
+        messageId: message.id,
+        toolCallsCount: Array.isArray(message.toolCalls) ? message.toolCalls.length : 0,
+        toolCallsType: typeof message.toolCalls
+      });
     }
+
+    if (!isNil(message.isActive)) {
+      // Determine if there are any tool calls (either from update or existing)
+      const toolCalls = message.toolCalls || currentMessage?.toolCalls || [];
+      const hasToolCalls = Array.isArray(toolCalls) && toolCalls.length > 0;
+      
+      // Only set isActive to 0 if explicitly requested AND there are no tool calls
+      const shouldBeActive = hasToolCalls || message.isActive === 1;
+      
+      stats.push('isActive = ?');
+      msg.isActive = shouldBeActive ? 1 : 0;
+      params.push(msg.isActive);
+      
+      debug('Updating isActive:', {
+        messageId: message.id,
+        hasToolCalls,
+        requestedIsActive: message.isActive,
+        finalIsActive: msg.isActive
+      });
+    }
+
     if (!isBlank(message.citedFiles)) {
       stats.push('citedFiles = ?');
-      msg.citedFiles = message.citedFiles as string;
+      msg.citedFiles = message.citedFiles;
       params.push(msg.citedFiles);
     }
+
     if (!isBlank(message.citedChunks)) {
       stats.push('citedChunks = ?');
-      msg.citedChunks = message.citedChunks as string;
+      msg.citedChunks = message.citedChunks;
       params.push(msg.citedChunks);
     }
+    
     if (message.id && stats.length) {
-      params.push(msg.id);
-      await window.electron.db.run(
+      params.push(message.id);
+      const result = await window.electron.db.run(
         `UPDATE messages SET ${stats.join(', ')} WHERE id = ?`,
         params
       );
-      set(
-        produce((state: IChatStore) => {
-          const index = state.messages.findIndex((m) => m.id === msg.id);
-          if (index !== -1) {
-            state.messages[index] = { ...state.messages[index], ...msg };
-          }
-        })
-      );
-      debug('Update message ', JSON.stringify(msg));
-      return true;
+      
+      if (result) {
+        set(
+          produce((state: IChatStore) => {
+            const index = state.messages.findIndex((m) => m.id === msg.id);
+            if (index !== -1) {
+              const currentMessage = state.messages[index];
+              const updatedMessage = processMessage({
+                ...currentMessage,
+                ...msg,
+              } as IChatMessage);
+              state.messages[index] = updatedMessage;
+              debug('Updated message in state:', {
+                messageId: updatedMessage.id,
+                toolCallsCount: updatedMessage.toolCalls?.length || 0
+              });
+            }
+          })
+        );
+      }
+      return result;
     }
     return false;
   },
@@ -444,32 +615,55 @@ const useChatStore = create<IChatStore>((set, get) => ({
     keyword?: string;
   }) => {
     if (chatId === tempChatId) {
+      debug('Fetching messages for temp chat, returning empty array');
       set({ messages: [] });
       return [];
     }
+
+    // Validate and sanitize numeric parameters
+    const sanitizedLimit = Math.max(1, Math.min(Number(limit) || 100, 1000));
+    const sanitizedOffset = Math.max(0, Number(offset) || 0);
+
     let sql = `SELECT messages.*, bookmarks.id bookmarkId
     FROM messages
     LEFT JOIN bookmarks ON bookmarks.msgId = messages.id
     WHERE messages.chatId = ?`;
-    let params = [chatId, limit, offset];
+    let params: (string | number)[] = [chatId];
+
     if (keyword && keyword.trim() !== '') {
+      const trimmedKeyword = keyword.trim();
       sql += ` AND (messages.prompt LIKE ? COLLATE NOCASE OR messages.reply LIKE ? COLLATE NOCASE)`;
-      params = [
-        chatId,
-        `%${keyword.trim()}%`,
-        `%${keyword.trim()}%`,
-        limit,
-        offset,
-      ];
+      params.push(`%${trimmedKeyword}%`, `%${trimmedKeyword}%`);
     }
-    sql += `ORDER BY messages.createdAt ASC
-    LIMIT ? OFFSET ?`;
-    const messages = (await window.electron.db.all(
-      sql,
-      params
-    )) as IChatMessage[];
-    set({ messages });
-    return messages;
+
+    sql += ' ORDER BY messages.createdAt ASC LIMIT ? OFFSET ?';
+    params.push(sanitizedLimit, sanitizedOffset);
+
+    debug('Fetching messages:', { sql, params });
+    
+    try {
+      const messages = (await window.electron.db.all(sql, params)) as IChatMessage[];
+      
+      // Only process messages that have toolCalls
+      const processedMessages = messages.map(msg => 
+        msg.toolCalls ? processMessage(msg) : { ...msg, toolCalls: [] }
+      );
+
+      debug('Processed fetched messages:', {
+        count: processedMessages.length,
+        messages: processedMessages.map(m => ({
+          id: m.id,
+          toolCallsCount: m.toolCalls?.length || 0
+        }))
+      });
+
+      set({ messages: processedMessages });
+      return processedMessages;
+    } catch (error) {
+      debug('Error fetching messages:', error);
+      // Return empty array on error to maintain consistent return type
+      return [];
+    }
   },
 }));
 

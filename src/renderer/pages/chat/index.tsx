@@ -208,10 +208,14 @@ ${prompt}
       scrollToBottom();
 
       const onChatComplete = async (result: IChatResponseMessage) => {
-        /**
-         * 异常分两种情况，一种是有输出， 但没有正常结束； 一种是没有输出
-         * 异常且没有输出，则只更新 isActive 为 0
-         */
+        debug('Chat complete with result:', {
+          error: result.error,
+          content: result.content?.substring(0, 100),
+          toolCalls: result.toolCalls,
+          inputTokens: result.inputTokens,
+          outputTokens: result.outputTokens
+        });
+
         if (result.error && isBlank(result.content)) {
           await updateMessage({
             id: msg.id,
@@ -229,12 +233,22 @@ ${prompt}
             ...new Set(citedChunks.map((k: any) => k.fileId)),
           ];
           const citedFiles = files.filter((f) => citedFileIds.includes(f.id));
+          
+          // Only pass the raw tool calls array - let the store handle serialization
+          const hasToolCalls = result.toolCalls && result.toolCalls.length > 0;
+          debug('Updating message with tool calls:', {
+            messageId: msg.id,
+            hasToolCalls,
+            toolCallsCount: result.toolCalls?.length || 0,
+            reply: result.content?.substring(0, 100)
+          });
+          
           await updateMessage({
             id: msg.id,
             reply: result.content,
             inputTokens,
             outputTokens,
-            isActive: 0,
+            isActive: hasToolCalls ? 1 : 0, // Keep active if there are tool calls
             citedFiles: JSON.stringify(citedFiles.map((f) => f.name)),
             citedChunks: JSON.stringify(
               citedChunks.map((k: any, idx: number) => ({
@@ -243,6 +257,7 @@ ${prompt}
                 id: k.id,
               }))
             ),
+            toolCalls: result.toolCalls || [], // Pass raw array
           });
           useUsageStore.getState().create({
             provider: chatService.provider.name,
@@ -255,10 +270,12 @@ ${prompt}
       };
       chatService.onComplete(onChatComplete);
       chatService.onReading((content: string) => {
+        debug('Reading content:', content.substring(0, 100));
         $reply = appendReply(msg.id, content);
         scrollToBottom();
       });
       chatService.onToolCalls((toolName: string) => {
+        debug('Tool called:', toolName);
         updateStates($chatId, { runningTool: toolName });
       });
       chatService.onError((err: any, aborted: boolean) => {

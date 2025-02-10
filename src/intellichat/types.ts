@@ -11,12 +11,18 @@ export interface IChatResponseMessage {
   isEnd?: boolean;
   inputTokens?: number;
   outputTokens?: number;
-  toolCalls?: any;
+  toolCalls?: IToolCall[];
   error?: {
     code?: number;
     type?: string;
     message: string;
   };
+}
+
+export interface IToolCall {
+  name: string;
+  args: any;
+  response?: any;
 }
 
 export interface IMCPTool {
@@ -157,8 +163,10 @@ export interface IChatContext {
   getTemperature: () => number;
   getMaxTokens: () => number;
   getChatContext: () => string;
-  getCtxMessages: () => IChatMessage[];
+  getCtxMessages: () => IChatMessageInternal[];
   isStream: () => boolean;
+  getMessageId: () => string;
+  updateMessage: (message: { id: string } & Partial<IChatMessage>) => Promise<void>;
 }
 
 export interface IChat {
@@ -177,21 +185,25 @@ export interface IChat {
 
 export interface IChatMessage {
   id: string;
-  bookmarkId?: string | null;
   chatId: string;
-  systemMessage?: string | null;
-  prompt: string;
-  reply: string;
-  model: string;
-  temperature: number;
-  maxTokens: number | null;
-  inputTokens: number;
-  outputTokens: number;
+  prompt?: string;
+  reply?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  isActive?: number;
   memo?: string;
-  createdAt: number;
-  isActive: boolean | 0 | 1;
   citedFiles?: string;
   citedChunks?: string;
+  toolCalls?: string | IToolCall[]; // Allow both string and array types for flexibility
+  createdAt?: number;
+  bookmarkId?: string | null;
+}
+
+export interface IChatMessageInternal extends Omit<IChatMessage, 'toolCalls'> {
+  toolCalls?: IToolCall[]; // Internal representation is always an array
 }
 
 export interface IPromptDef {
